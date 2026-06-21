@@ -3,30 +3,9 @@ Dashboard de calidad del aire de la CDMX (RAMA/SIMAT, 2024-2026)
 ================================================================
 Proyecto de Analítica y Visualización de Datos.
 
-CÓMO EJECUTARLO
----------------
-1. Coloca este archivo (app.py) en la carpeta del proyecto, junto a la
-   carpeta `datos/` (la que contiene datos/procesados/*.csv).
-   La estructura esperada es:
-       proyecto/
-         app.py            <-- este archivo
-         datos/
-           procesados/
-             horario_principal.csv
-             diario_todas.csv
-             pca_estaciones.csv
-             cargas_pca.csv
-             resumen.json
-   Si tus archivos están en otra ruta, cámbiala en la barra lateral
-   (campo "Ruta de datos") o edita DATA_DIR_DEFAULT abajo.
-
-2. Activa el entorno que ya tiene streamlit (el de environment.yml):
-       conda activate aire-cdmx
-
-3. Ejecuta:
-       streamlit run app.py
-
-   Se abrirá solo en el navegador. Si no, entra a http://localhost:8501
+Gráficas interactivas con Altair (incluido en Streamlit). Para ejecutarlo
+localmente: coloca este archivo junto a la carpeta `datos/procesados/` y corre
+`streamlit run app.py`. En la nube lee `datos/procesados/*.csv` del repo.
 """
 
 from pathlib import Path
@@ -34,17 +13,15 @@ import json
 
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from scipy.stats import chi2_contingency, chi2 as chi2_dist
+import altair as alt
 import streamlit as st
 
-# --------------------------------------------------------------------------
-# Configuración general
-# --------------------------------------------------------------------------
-st.set_page_config(page_title="Calidad del aire CDMX", page_icon="🌫️", layout="wide")
+alt.data_transformers.disable_max_rows()
 
+# --------------------------------------------------------------------------
+# Constantes
+# --------------------------------------------------------------------------
 DATA_DIR_DEFAULT = "datos/procesados"
 
 POLLUTANTS = ["CO", "NO", "NO2", "NOX", "O3", "PM10", "PM2.5", "PMCO", "SO2"]
@@ -53,24 +30,25 @@ UNITS = {"CO": "ppm", "NO": "ppb", "NO2": "ppb", "NOX": "ppb", "O3": "ppb",
 
 ZONE_NAMES = {"NE": "Nororiente", "NO": "Noroeste", "CE": "Centro",
               "SO": "Surponiente", "SE": "Sureste"}
-ZONE_COLORS = {"NE": "#D85A30", "NO": "#BA7517", "CE": "#534AB7",
-               "SO": "#1D9E75", "SE": "#378ADD"}
+ZONE_COLORS = {"NE": "#EF6C3A", "NO": "#D69A2D", "CE": "#6366F1",
+               "SO": "#10B981", "SE": "#38BDF8"}
 
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun",
          "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 SEASON_ORDER = ["Seca-fría", "Seca-caliente", "Lluvias"]
 CAT_ORDER = ["Buena", "Aceptable", "Mala", "Muy mala"]
+CAT_COLORS = ["#22C55E", "#FACC15", "#F97316", "#DC2626"]
 
-plt.rcParams.update({
-    "figure.facecolor": "white", "axes.facecolor": "white",
-    "axes.grid": True, "grid.color": "#E6E6E6", "grid.linewidth": 0.8,
-    "axes.spines.top": False, "axes.spines.right": False,
-    "font.size": 11, "axes.titlesize": 13,
-})
+# Paleta para las series de filtros y acentos (legible en claro y oscuro)
+C_CRUDA = "#9CA3AF"
+C_MEDIA = "#3B82F6"
+C_MEDIANA = "#EF4444"
+C_EXPO = "#22C55E"
+C_ACCENT = "#3B82F6"
 
 
 # --------------------------------------------------------------------------
-# Funciones auxiliares (química / estadística del proyecto)
+# Funciones de cálculo (química / estadística del proyecto)
 # --------------------------------------------------------------------------
 def temporada(mes: int) -> str:
     if mes in (11, 12, 1, 2):
@@ -80,7 +58,7 @@ def temporada(mes: int) -> str:
     return "Lluvias"
 
 
-def categoria_o3(valor: float) -> str:
+def categoria_o3(valor: float):
     if pd.isna(valor):
         return np.nan
     if valor <= 58:
@@ -141,6 +119,168 @@ def filtro_exponencial(arr: np.ndarray, theta: float = 0.05) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
+# Constructores de gráficas Altair (interactivas)
+# --------------------------------------------------------------------------
+def make_cobertura_chart(cob_long: pd.DataFrame):
+    """cob_long: columnas [contaminante, anio, pct]."""
+    base = alt.Chart(cob_long)
+    heat = base.mark_rect().encode(
+        x=alt.X("contaminante:N", title=None, sort=POLLUTANTS),
+        y=alt.Y("anio:O", title="año"),
+        color=alt.Color("pct:Q", title="% válido",
+                        scale=alt.Scale(scheme="blues", domain=[0, 100])),
+        tooltip=[alt.Tooltip("contaminante:N", title="contaminante"),
+                 alt.Tooltip("anio:O", title="año"),
+                 alt.Tooltip("pct:Q", title="% válido", format=".1f")],
+    )
+    texto = base.mark_text(fontSize=11).encode(
+        x=alt.X("contaminante:N", sort=POLLUTANTS),
+        y="anio:O",
+        text=alt.Text("pct:Q", format=".0f"),
+        color=alt.condition("datum.pct > 55", alt.value("white"), alt.value("#1E293B")),
+    )
+    return (heat + texto).properties(height=200)
+
+
+def make_diurno_chart(dfm: pd.DataFrame, cont: str, unit: str):
+    """dfm: columnas [hora, media, q1, q3]."""
+    base = alt.Chart(dfm)
+    band = base.mark_area(opacity=0.22, color=C_ACCENT).encode(
+        x=alt.X("hora:Q", title="hora del día",
+                axis=alt.Axis(values=list(range(0, 24, 3)))),
+        y=alt.Y("q1:Q", title=f"{cont} ({unit})"),
+        y2="q3:Q",
+    )
+    linea = base.mark_line(color=C_ACCENT, strokeWidth=2.5, point=True).encode(
+        x="hora:Q",
+        y="media:Q",
+        tooltip=[alt.Tooltip("hora:Q", title="hora"),
+                 alt.Tooltip("media:Q", title="promedio", format=".1f"),
+                 alt.Tooltip("q1:Q", title="Q1", format=".1f"),
+                 alt.Tooltip("q3:Q", title="Q3", format=".1f")],
+    )
+    return (band + linea).properties(height=300)
+
+
+def make_estacional_chart(dfm: pd.DataFrame, cont: str, unit: str):
+    """dfm: columnas [mes_idx, mes, valor, seca_caliente(bool)]."""
+    return alt.Chart(dfm).mark_bar().encode(
+        x=alt.X("mes:N", title=None, sort=MESES),
+        y=alt.Y("valor:Q", title=f"{cont} ({unit}) — promedio"),
+        color=alt.Color("seca_caliente:N",
+                        scale=alt.Scale(domain=["Seca-caliente", "Resto del año"],
+                                        range=["#F97316", "#94A3B8"]),
+                        legend=alt.Legend(title="temporada")),
+        tooltip=[alt.Tooltip("mes:N", title="mes"),
+                 alt.Tooltip("valor:Q", title="promedio", format=".1f")],
+    ).properties(height=300)
+
+
+def make_espectro_chart(spec_df: pd.DataFrame, umbral: float, picos_df: pd.DataFrame):
+    """spec_df: [periodo, amplitud]; picos_df: [periodo, amplitud]."""
+    x = alt.X("periodo:Q", scale=alt.Scale(type="log"),
+              title="periodo (horas) — escala logarítmica")
+    linea = alt.Chart(spec_df).mark_line(color="#6366F1", strokeWidth=1.4).encode(
+        x=x,
+        y=alt.Y("amplitud:Q", title="amplitud"),
+        tooltip=[alt.Tooltip("periodo:Q", title="periodo (h)", format=".1f"),
+                 alt.Tooltip("amplitud:Q", title="amplitud", format=".3f")],
+    )
+    regla = alt.Chart(pd.DataFrame({"y": [umbral]})).mark_rule(
+        color="#DC2626", strokeDash=[5, 4]).encode(y="y:Q")
+    marcas = alt.Chart(pd.DataFrame({"periodo": [24, 12], "etq": ["24 h", "12 h"]}))
+    reglas_v = marcas.mark_rule(color="#94A3B8", strokeDash=[2, 3]).encode(x=x)
+    etiquetas = marcas.mark_text(align="left", dx=4, dy=-6, fontSize=11,
+                                 color="#64748B").encode(x=x, text="etq:N")
+    puntos = alt.Chart(picos_df).mark_circle(color="#F97316", size=80).encode(
+        x=x, y="amplitud:Q",
+        tooltip=[alt.Tooltip("periodo:Q", title="periodo (h)", format=".1f"),
+                 alt.Tooltip("amplitud:Q", title="amplitud", format=".3f")],
+    )
+    return (linea + regla + reglas_v + etiquetas + puntos).properties(
+        height=340).interactive()
+
+
+def make_pca_chart(pca_df: pd.DataFrame):
+    """pca_df: [estacion, PC1, PC2, zona, zona_nombre]."""
+    zonas = [z for z in ZONE_COLORS if z in set(pca_df["zona"])]
+    escala = alt.Scale(domain=zonas, range=[ZONE_COLORS[z] for z in zonas])
+    base = alt.Chart(pca_df)
+    ejes = (alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color="#CBD5E1").encode(y="z:Q")
+            + alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color="#CBD5E1").encode(x="z:Q"))
+    puntos = base.mark_circle(size=140, opacity=0.9, stroke="white",
+                              strokeWidth=1).encode(
+        x=alt.X("PC1:Q", title="PC1 (~73%):  primarios (tráfico/industria)  ←→  ozono"),
+        y=alt.Y("PC2:Q", title="PC2 (~14%):  SO₂ ↑  (corredor industrial norte)"),
+        color=alt.Color("zona:N", scale=escala,
+                        legend=alt.Legend(title="zona")),
+        tooltip=[alt.Tooltip("estacion:N", title="estación"),
+                 alt.Tooltip("zona_nombre:N", title="zona"),
+                 alt.Tooltip("PC1:Q", format=".2f"),
+                 alt.Tooltip("PC2:Q", format=".2f")],
+    )
+    texto = base.mark_text(dy=-12, fontSize=10, color="#475569").encode(
+        x="PC1:Q", y="PC2:Q", text="estacion:N")
+    return (ejes + puntos + texto).properties(height=460).interactive()
+
+
+def make_cargas_chart(cargas_long: pd.DataFrame):
+    """cargas_long: [parametro, componente, carga]."""
+    return alt.Chart(cargas_long).mark_bar().encode(
+        x=alt.X("parametro:N", title=None),
+        xOffset="componente:N",
+        y=alt.Y("carga:Q", title="carga"),
+        color=alt.Color("componente:N",
+                        scale=alt.Scale(domain=["PC1", "PC2"],
+                                        range=["#6366F1", "#10B981"]),
+                        legend=alt.Legend(title=None, orient="top")),
+        tooltip=[alt.Tooltip("parametro:N", title="contaminante"),
+                 alt.Tooltip("componente:N", title="componente"),
+                 alt.Tooltip("carga:Q", format=".3f")],
+    ).properties(height=320)
+
+
+def make_corr_chart(corr_long: pd.DataFrame, metodo: str):
+    """corr_long: [v1, v2, corr]."""
+    base = alt.Chart(corr_long)
+    heat = base.mark_rect().encode(
+        x=alt.X("v1:N", title=None, sort=POLLUTANTS),
+        y=alt.Y("v2:N", title=None, sort=POLLUTANTS),
+        color=alt.Color("corr:Q", title=f"r ({metodo})",
+                        scale=alt.Scale(domain=[-1, 0, 1],
+                                        range=["#2166AC", "#F7F7F7", "#B2182B"])),
+        tooltip=[alt.Tooltip("v1:N", title=""), alt.Tooltip("v2:N", title=""),
+                 alt.Tooltip("corr:Q", title="correlación", format=".2f")],
+    )
+    texto = base.mark_text(fontSize=10).encode(
+        x=alt.X("v1:N", sort=POLLUTANTS),
+        y=alt.Y("v2:N", sort=POLLUTANTS),
+        text=alt.Text("corr:Q", format=".2f"),
+        color=alt.condition("abs(datum.corr) > 0.55",
+                            alt.value("white"), alt.value("#1E293B")),
+    )
+    return (heat + texto).properties(height=420)
+
+
+def make_chi_prop_chart(prop_long: pd.DataFrame):
+    """prop_long: [temporada, categoria, dias]. Barras 100% apiladas."""
+    cats = [c for c in CAT_ORDER if c in set(prop_long["categoria"])]
+    escala = alt.Scale(domain=cats,
+                       range=[CAT_COLORS[CAT_ORDER.index(c)] for c in cats])
+    return alt.Chart(prop_long).mark_bar().encode(
+        x=alt.X("temporada:N", title=None, sort=SEASON_ORDER),
+        y=alt.Y("dias:Q", title="proporción de días", stack="normalize",
+                axis=alt.Axis(format="%")),
+        color=alt.Color("categoria:N", scale=escala,
+                        legend=alt.Legend(title="categoría O₃")),
+        order=alt.Order("orden:Q"),
+        tooltip=[alt.Tooltip("temporada:N", title="temporada"),
+                 alt.Tooltip("categoria:N", title="categoría"),
+                 alt.Tooltip("dias:Q", title="días")],
+    ).properties(height=320)
+
+
+# --------------------------------------------------------------------------
 # Carga de datos (en caché)
 # --------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
@@ -173,7 +313,7 @@ def load_resumen(data_dir: str) -> dict:
         return json.load(fh)
 
 
-def resolver_data_dir(propuesta: str) -> Path | None:
+def resolver_data_dir(propuesta: str):
     base = Path(__file__).resolve().parent
     candidatos = [Path(propuesta), base / propuesta, base,
                   base / "procesados", base.parent / "datos" / "procesados"]
@@ -187,149 +327,143 @@ def resolver_data_dir(propuesta: str) -> Path | None:
 # Páginas
 # --------------------------------------------------------------------------
 def pagina_inicio(d):
-    st.title("🌫️ Calidad del aire en la Ciudad de México")
+    st.title(":material/air: Calidad del aire en la Ciudad de México")
     st.markdown(
         "Análisis de la **Red Automática de Monitoreo Atmosférico (RAMA/SIMAT)** "
-        "del Valle de México, con datos horarios de 2024 a 2026. Este tablero "
-        "presenta los resultados del proyecto, organizados según las tres unidades "
-        "del curso."
+        "del Valle de México, con datos horarios de 2024 a 2026. Recorre cada "
+        "unidad del curso con el menú de la izquierda. "
+        ":blue-badge[Unidad I] :blue-badge[Unidad II] :blue-badge[Unidad III]"
     )
-    st.markdown(
-        "> **Pregunta del proyecto:** ¿qué patrones gobiernan la contaminación del "
-        "aire en la CDMX —según la hora, la temporada y la zona— y cómo se "
-        "relacionan los contaminantes entre sí?"
-    )
+    st.caption("Pregunta del proyecto: ¿qué patrones gobiernan la contaminación del "
+               "aire en la CDMX —según la hora, la temporada y la zona— y cómo se "
+               "relacionan los contaminantes entre sí?")
 
     r = d["resumen"]
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Estaciones (PCA)", f"{d['pca']['estacion'].nunique()}")
-    c2.metric("Periodo", f"{min(r['anios'])}–{max(r['anios'])}")
-    c3.metric("Estación principal", f"{r['nombre_estacion']} ({r['estacion_principal']})")
-    c4.metric("Varianza PC1 + PC2", f"{(r['varianza_pc1'] + r['varianza_pc2'])*100:.0f}%")
+    with st.container(horizontal=True):
+        st.metric("Estaciones (PCA)", f"{d['pca']['estacion'].nunique()}", border=True)
+        st.metric("Periodo", f"{min(r['anios'])}–{max(r['anios'])}", border=True)
+        st.metric("Estación principal",
+                  f"{r['nombre_estacion']} ({r['estacion_principal']})", border=True)
+        st.metric("Varianza PC1 + PC2",
+                  f"{(r['varianza_pc1'] + r['varianza_pc2'])*100:.0f}%", border=True)
 
-    st.divider()
-    st.subheader("Hallazgos principales")
-    st.markdown(
-        "- **Dos relojes en el aire.** El análisis espectral confirma un ciclo "
-        "**diario de 24 h** (y su armónico de 12 h) y una **modulación estacional**.\n"
-        "- **El espacio se ordena por química.** El PCA separa un núcleo de "
-        "**contaminantes primarios** (tráfico/industria, nororiente y centro) de una "
-        "periferia de **ozono** (surponiente elevado), con un eje aparte de **SO₂** "
-        "que marca el corredor industrial del norte.\n"
-        "- **Relaciones con sentido físico.** O₃ ↔ NO₂ negativa (precursor "
-        "consumido), PM10 ↔ NO₂ positiva (tráfico común), O₃ ↔ temperatura positiva.\n"
-        "- **Un resultado que invita a pensar.** La prueba χ² **no** detecta "
-        "dependencia entre la calidad del aire por ozono y la temporada en la "
-        "estación central (ver Unidad III)."
-    )
-    st.caption("Usa el menú de la izquierda para recorrer cada unidad.")
+    with st.container(border=True):
+        st.subheader("Hallazgos principales")
+        st.markdown(
+            "- **Dos relojes en el aire.** El análisis espectral confirma un ciclo "
+            "**diario de 24 h** (y su armónico de 12 h) y una **modulación estacional**.\n"
+            "- **El espacio se ordena por química.** El PCA separa un núcleo de "
+            "**contaminantes primarios** (tráfico/industria, nororiente y centro) de una "
+            "periferia de **ozono** (surponiente elevado), con un eje aparte de **SO₂** "
+            "que marca el corredor industrial del norte.\n"
+            "- **Relaciones con sentido físico.** O₃ ↔ NO₂ negativa (precursor "
+            "consumido), PM10 ↔ NO₂ positiva (tráfico común), O₃ ↔ temperatura positiva.\n"
+            "- **Un resultado que invita a pensar.** La prueba χ² **no** detecta "
+            "dependencia entre la calidad del aire por ozono y la temporada en la "
+            "estación central (ver Unidad III)."
+        )
 
 
 def pagina_datos(d):
-    st.header("Los datos")
+    st.header(":material/database: Los datos")
     st.markdown(
         "Cada estación de la RAMA mide los **contaminantes criterio** cada hora. "
         "Los archivos crudos vienen como un Excel por año y contaminante; el "
-        "notebook los integró, limpió y exportó a los CSV que alimentan este "
-        "tablero."
+        "notebook los integró, limpió y exportó a los CSV que alimentan este tablero."
     )
-    tabla_cont = pd.DataFrame({
-        "Contaminante": POLLUTANTS,
-        "Unidad": [UNITS[p] for p in POLLUTANTS],
-        "Tipo": ["Secundario (se forma con sol)" if p == "O3" else "Primario / mezcla"
-                 for p in POLLUTANTS],
-    })
-    st.dataframe(tabla_cont, hide_index=True, use_container_width=True)
 
-    st.subheader(f"Cobertura de datos en {d['resumen']['nombre_estacion']} (estación principal)")
-    st.caption("Porcentaje de horas con dato válido. Los datos de la RAMA tienen "
-               "huecos reales; 2026 está poco poblado.")
-    h = d["horario"].copy()
-    h["anio"] = h["fecha"].dt.year
-    cob = (h.groupby("anio")[POLLUTANTS].apply(lambda x: x.notna().mean() * 100)).round(1)
-    fig, ax = plt.subplots(figsize=(9, 3.6))
-    im = ax.imshow(cob.values, aspect="auto", cmap="YlGnBu", vmin=0, vmax=100)
-    ax.set_xticks(range(len(POLLUTANTS)), POLLUTANTS)
-    ax.set_yticks(range(len(cob.index)), cob.index)
-    for i in range(cob.shape[0]):
-        for j in range(cob.shape[1]):
-            ax.text(j, i, f"{cob.values[i, j]:.0f}", ha="center", va="center", fontsize=8)
-    ax.set_title("% de horas válidas por año y contaminante")
-    fig.colorbar(im, ax=ax, label="% válido")
-    st.pyplot(fig, use_container_width=True)
-    plt.close(fig)
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        with st.container(border=True):
+            st.markdown("**Contaminantes medidos**")
+            tabla_cont = pd.DataFrame({
+                "Contaminante": POLLUTANTS,
+                "Unidad": [UNITS[p] for p in POLLUTANTS],
+                "Tipo": ["Secundario (sol)" if p == "O3" else "Primario / mezcla"
+                         for p in POLLUTANTS],
+            })
+            st.dataframe(tabla_cont, hide_index=True)
+    with col2:
+        with st.container(border=True):
+            st.markdown(f"**Cobertura en {d['resumen']['nombre_estacion']} "
+                        "(% de horas con dato válido)**")
+            h = d["horario"].copy()
+            h["anio"] = h["fecha"].dt.year
+            cob = h.groupby("anio")[POLLUTANTS].apply(lambda x: x.notna().mean() * 100)
+            cob_long = (cob.round(1).reset_index()
+                        .melt(id_vars="anio", var_name="contaminante", value_name="pct"))
+            st.altair_chart(make_cobertura_chart(cob_long))
+            st.caption("Los datos de la RAMA tienen huecos reales; 2026 está poco poblado.")
 
-    with st.expander("Ver una muestra de la serie horaria (Merced)"):
-        st.dataframe(d["horario"].head(24), use_container_width=True)
+    with st.expander("Ver una muestra de la serie horaria (Merced)",
+                     icon=":material/table_chart:"):
+        st.dataframe(d["horario"].head(24), hide_index=True)
 
 
 def pagina_ciclos(d):
-    st.header("Unidad I · Exploración: los ciclos del aire")
-    st.caption("Series de la estación principal (Merced).")
+    st.header(":material/schedule: Unidad I · Los ciclos del aire")
     cont = st.selectbox("Contaminante", POLLUTANTS, index=POLLUTANTS.index("O3"))
+    u = UNITS[cont]
     h = d["horario"].copy()
     h["hora"] = h["fecha"].dt.hour
     h["mes"] = h["fecha"].dt.month
-    u = UNITS[cont]
 
     col1, col2 = st.columns(2)
-
     with col1:
-        st.subheader("Ciclo diurno (por hora del día)")
-        g = h.groupby("hora")[cont]
-        media, q1, q3 = g.mean(), g.quantile(0.25), g.quantile(0.75)
-        fig, ax = plt.subplots(figsize=(6, 3.8))
-        ax.fill_between(media.index, q1, q3, color="#9FE1CB", alpha=0.5, label="rango intercuartílico")
-        ax.plot(media.index, media.values, color="#0F6E56", lw=2, label="promedio")
-        ax.set_xlabel("hora del día"); ax.set_ylabel(f"{cont} ({u})")
-        ax.set_xticks(range(0, 24, 3)); ax.legend(fontsize=8)
-        st.pyplot(fig, use_container_width=True); plt.close(fig)
-        if cont == "O3":
-            st.caption("El ozono es secundario: se forma con el sol y alcanza su "
-                       "máximo a primera hora de la tarde.")
-
+        with st.container(border=True):
+            st.markdown("**Ciclo diurno** (promedio por hora del día)")
+            g = h.groupby("hora")[cont]
+            dfm = pd.DataFrame({"hora": g.mean().index, "media": g.mean().values,
+                                "q1": g.quantile(0.25).values,
+                                "q3": g.quantile(0.75).values})
+            st.altair_chart(make_diurno_chart(dfm, cont, u))
+            if cont == "O3":
+                st.caption("El ozono es secundario: se forma con el sol y llega a su "
+                           "máximo a primera hora de la tarde.")
     with col2:
-        st.subheader("Ciclo anual (por mes)")
-        media_mes = h.groupby("mes")[cont].mean().reindex(range(1, 13))
-        fig, ax = plt.subplots(figsize=(6, 3.8))
-        colores = ["#BA7517" if m in (3, 4, 5) else "#888780" for m in range(1, 13)]
-        ax.bar(range(1, 13), media_mes.values, color=colores)
-        ax.set_xticks(range(1, 13), MESES, rotation=0, fontsize=8)
-        ax.set_ylabel(f"{cont} ({u}) — promedio")
-        st.pyplot(fig, use_container_width=True); plt.close(fig)
-        if cont == "O3":
-            st.caption("En naranja la temporada seca-caliente (mar–may), cuando el "
-                       "ozono se dispara por la máxima radiación.")
+        with st.container(border=True):
+            st.markdown("**Ciclo anual** (promedio por mes)")
+            media_mes = h.groupby("mes")[cont].mean().reindex(range(1, 13))
+            dfm = pd.DataFrame({
+                "mes_idx": range(1, 13),
+                "mes": MESES,
+                "valor": media_mes.values,
+                "seca_caliente": ["Seca-caliente" if m in (3, 4, 5) else "Resto del año"
+                                  for m in range(1, 13)],
+            })
+            st.altair_chart(make_estacional_chart(dfm, cont, u))
+            if cont == "O3":
+                st.caption("En naranja la temporada seca-caliente (mar–may), cuando el "
+                           "ozono se dispara por la máxima radiación.")
 
-    st.divider()
-    st.subheader("Filtros de suavizado (Unidad I)")
-    st.caption("La serie horaria es ruidosa; los filtros revelan la tendencia. "
-               "Media y mediana con ventana q = 24 h; exponencial con θ = 0.05.")
-    anios = sorted(h["fecha"].dt.year.unique())
-    ay = st.select_slider("Año a mostrar", anios, value=anios[0])
-    hh = d["horario"]
-    s = hh[hh["fecha"].dt.year == ay].set_index("fecha")[cont].sort_index()
-    if s.notna().sum() < 100:
-        st.warning("Pocos datos válidos en ese año para este contaminante.")
-    else:
-        media = s.rolling(24, center=True, min_periods=6).mean()
-        mediana = s.rolling(24, center=True, min_periods=6).median()
-        expo = pd.Series(filtro_exponencial(s.values, 0.05), index=s.index)
-        fig, ax = plt.subplots(figsize=(11, 3.8))
-        ax.plot(s.index, s.values, color="#D3D1C7", lw=0.6, label="señal cruda")
-        ax.plot(media.index, media.values, color="#185FA5", lw=1.4, label="media móvil")
-        ax.plot(mediana.index, mediana.values, color="#993C1D", lw=1.4, label="mediana móvil")
-        ax.plot(expo.index, expo.values, color="#3B6D11", lw=1.4, label="exponencial")
-        ax.set_ylabel(f"{cont} ({u})"); ax.legend(ncol=4, fontsize=8)
-        st.pyplot(fig, use_container_width=True); plt.close(fig)
+    with st.container(border=True):
+        st.markdown("**Filtros de suavizado**")
+        st.caption("La serie horaria es ruidosa; los filtros revelan la tendencia. "
+                   "Media y mediana con ventana q = 24 h; exponencial con θ = 0.05.")
+        anios = sorted(h["fecha"].dt.year.unique())
+        ay = st.select_slider("Año a mostrar", anios, value=anios[0])
+        s = d["horario"]
+        s = s[s["fecha"].dt.year == ay].set_index("fecha")[cont].sort_index()
+        if s.notna().sum() < 100:
+            st.warning("Pocos datos válidos en ese año para este contaminante.",
+                       icon=":material/warning:")
+        else:
+            df_f = pd.DataFrame({
+                "Señal cruda": s,
+                "Media móvil": s.rolling(24, center=True, min_periods=6).mean(),
+                "Mediana móvil": s.rolling(24, center=True, min_periods=6).median(),
+                "Exponencial": pd.Series(filtro_exponencial(s.values, 0.05), index=s.index),
+            })
+            st.line_chart(df_f, y_label=f"{cont} ({u})",
+                          color=[C_CRUDA, C_MEDIA, C_MEDIANA, C_EXPO])
 
 
 def pagina_espectro(d):
-    st.header("Unidad II · Análisis espectral")
+    st.header(":material/graphic_eq: Unidad II · Análisis espectral")
     st.markdown(
         "La transformada de Fourier descompone la serie en las **ondas** que la "
-        "forman y mide cuál es más fuerte. Esperamos que confirme, de forma "
-        "objetiva, los ciclos vistos en la exploración."
+        "forman y mide cuál es más fuerte. Confirma de forma objetiva los ciclos "
+        "vistos en la exploración."
     )
     h = d["horario"]
     anios = sorted(h["fecha"].dt.year.unique())
@@ -340,150 +474,146 @@ def pagina_espectro(d):
     serie = h[h["fecha"].dt.year == ay].set_index("fecha")[cont].sort_index()
     res = espectro(serie)
     if res is None:
-        st.warning("No hay suficientes datos continuos en esa combinación.")
+        st.warning("No hay suficientes datos continuos en esa combinación.",
+                   icon=":material/warning:")
         return
     periodos, amp = res
-    umbral = amp.mean() + 3 * amp.std()
-
+    umbral = float(amp.mean() + 3 * amp.std())
     mask = (periodos >= 2) & (periodos <= 1000)
-    fig, ax = plt.subplots(figsize=(11, 4.2))
-    ax.plot(periodos[mask], amp[mask], color="#534AB7", lw=1.2)
-    ax.axhline(umbral, color="#A32D2D", ls="--", lw=1, label="umbral (media + 3σ)")
-    for ph in (24, 12):
-        ax.axvline(ph, color="#888780", ls=":", lw=1)
-        ax.text(ph, ax.get_ylim()[1] * 0.95, f"{ph} h", rotation=90,
-                va="top", ha="right", fontsize=8, color="#5F5E5A")
-    picos = mask & (amp > umbral)
-    ax.scatter(periodos[picos], amp[picos], color="#D85A30", zorder=5, s=30,
-               label="picos dominantes")
-    ax.set_xscale("log"); ax.set_xlabel("periodo (horas) — escala log")
-    ax.set_ylabel("amplitud"); ax.legend(fontsize=8)
-    ax.set_title(f"Espectro de {cont} en Merced ({ay})")
-    st.pyplot(fig, use_container_width=True); plt.close(fig)
+    spec_df = pd.DataFrame({"periodo": periodos[mask], "amplitud": amp[mask]})
+    pmask = mask & (amp > umbral)
+    picos_df = pd.DataFrame({"periodo": periodos[pmask], "amplitud": amp[pmask]})
 
-    top = (pd.DataFrame({"periodo_h": periodos[picos], "amplitud": amp[picos]})
-           .sort_values("amplitud", ascending=False).head(8).round(2))
-    top["periodo_h"] = top["periodo_h"].round(1)
-    st.caption("Periodos detectados como dominantes (amplitud por encima del umbral):")
-    st.dataframe(top, hide_index=True, use_container_width=True)
-    if cont == "O3":
-        st.info("En el ozono aparecen picos cerca de **24 h** (el ciclo "
-                "fotoquímico diario) y **12 h** (el armónico que corrige la forma "
-                "asimétrica de la curva).")
+    with st.container(border=True):
+        st.markdown(f"**Espectro de {cont} en Merced ({ay})**")
+        st.altair_chart(make_espectro_chart(spec_df, umbral, picos_df))
+
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        with st.container(border=True):
+            st.markdown("**Periodos dominantes**")
+            top = (picos_df.sort_values("amplitud", ascending=False).head(8)
+                   .rename(columns={"periodo": "periodo (h)", "amplitud": "amplitud"}))
+            top["periodo (h)"] = top["periodo (h)"].round(1)
+            top["amplitud"] = top["amplitud"].round(3)
+            st.dataframe(top, hide_index=True)
+    with col2:
+        if cont == "O3":
+            st.info("En el ozono aparecen picos cerca de **24 h** (el ciclo "
+                    "fotoquímico diario) y **12 h** (el armónico que corrige la "
+                    "forma asimétrica de la curva).", icon=":material/lightbulb:")
+        st.caption("Tip: la gráfica es interactiva — arrastra para hacer zoom y pasa "
+                   "el cursor sobre los puntos para ver el periodo exacto.")
 
 
 def pagina_pca(d):
-    st.header("Unidad II · PCA: el mapa de las estaciones")
+    st.header(":material/scatter_plot: Unidad II · PCA: el mapa de las estaciones")
     r = d["resumen"]
-    pca, cargas = d["pca"], d["cargas"]
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Varianza PC1", f"{r['varianza_pc1']*100:.1f}%")
-    c2.metric("Varianza PC2", f"{r['varianza_pc2']*100:.1f}%")
-    c3.metric("Componentes para 90%", f"{r['q_90']}")
+    with st.container(horizontal=True):
+        st.metric("Varianza PC1", f"{r['varianza_pc1']*100:.1f}%", border=True)
+        st.metric("Varianza PC2", f"{r['varianza_pc2']*100:.1f}%", border=True)
+        st.metric("Componentes para 90%", f"{r['q_90']}", border=True)
 
-    st.subheader("Estaciones en el plano PC1–PC2 (color por zona)")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for z, sub in pca.groupby("zona"):
-        ax.scatter(sub["PC1"], sub["PC2"], s=70, color=ZONE_COLORS.get(z, "#888780"),
-                   label=f"{z} · {ZONE_NAMES.get(z, z)}", edgecolor="white", zorder=3)
-        for _, row in sub.iterrows():
-            ax.annotate(row["estacion"], (row["PC1"], row["PC2"]),
-                        textcoords="offset points", xytext=(0, 7),
-                        ha="center", fontsize=8, color="#444441")
-    ax.axhline(0, color="#B4B2A9", lw=0.8); ax.axvline(0, color="#B4B2A9", lw=0.8)
-    ax.set_xlabel("PC1 (~73%):  primarios (tráfico/industria)  ←→  ozono")
-    ax.set_ylabel("PC2 (~14%):  SO₂ ↑  (corredor industrial norte)")
-    ax.legend(fontsize=8, loc="best")
-    st.pyplot(fig, use_container_width=True); plt.close(fig)
+    pca = d["pca"].copy()
+    pca["zona_nombre"] = pca["zona"].map(ZONE_NAMES).fillna(pca["zona"])
+    with st.container(border=True):
+        st.markdown("**Estaciones en el plano PC1–PC2** (color por zona)")
+        st.altair_chart(make_pca_chart(pca))
 
     col1, col2 = st.columns([3, 2])
     with col1:
-        st.subheader("Cargas: qué pesa en cada componente")
-        fig, ax = plt.subplots(figsize=(6.5, 4))
-        x = np.arange(len(cargas)); w = 0.38
-        ax.bar(x - w/2, cargas["PC1"], w, label="PC1", color="#534AB7")
-        ax.bar(x + w/2, cargas["PC2"], w, label="PC2", color="#1D9E75")
-        ax.axhline(0, color="#888780", lw=0.8)
-        ax.set_xticks(x, cargas["parametro"]); ax.legend(fontsize=8)
-        ax.set_ylabel("carga")
-        st.pyplot(fig, use_container_width=True); plt.close(fig)
+        with st.container(border=True):
+            st.markdown("**Cargas: qué pesa en cada componente**")
+            cargas_long = d["cargas"].melt(id_vars="parametro",
+                                           value_vars=["PC1", "PC2"],
+                                           var_name="componente", value_name="carga")
+            st.altair_chart(make_cargas_chart(cargas_long))
     with col2:
-        st.subheader("Interpretación")
-        st.markdown(
-            "- **PC1** (eje horizontal): los primarios (CO, NO, NO₂, NOX) cargan "
-            "negativo y el O₃ positivo. Es un eje **primarios ↔ ozono**, no un "
-            "eje de \"nivel general\".\n"
-            "- **PC2** (eje vertical): lo domina el **SO₂**. Aísla al corredor "
-            "industrial del norte (Tlalnepantla, Cuautitlán, Atizapán).\n"
-            "- El **PM no entró** en este PCA (lo descartó el filtro de cobertura)."
-        )
-    st.caption("Nota: esta lectura corrige la redacción original del notebook, que "
-               "describía PC1 como 'nivel general' e incluía al PM.")
+        with st.container(border=True):
+            st.markdown("**Interpretación**")
+            st.markdown(
+                "- **PC1** (horizontal): los primarios (CO, NO, NO₂, NOX) cargan "
+                "negativo y el O₃ positivo. Es un eje **primarios ↔ ozono**, no de "
+                "\"nivel general\".\n"
+                "- **PC2** (vertical): lo domina el **SO₂**. Aísla al corredor "
+                "industrial del norte (Tlalnepantla, Cuautitlán, Atizapán).\n"
+                "- El **PM no entró** en este PCA (lo descartó el filtro de cobertura)."
+            )
+            st.caption("Esta lectura corrige la redacción original del notebook, que "
+                       "describía PC1 como 'nivel general' e incluía al PM.")
 
 
 def pagina_correlacion(d):
-    st.header("Unidad III · Correlación entre contaminantes")
-    st.caption("Series horarias de la estación principal (Merced).")
-    metodo = st.radio("Coeficiente", ["pearson", "spearman", "kendall"], horizontal=True)
-    cols = [c for c in POLLUTANTS if d["horario"][c].notna().sum() > 100]
-    corr = d["horario"][cols].corr(method=metodo)
+    st.header(":material/analytics: Unidad III · Correlación y prueba χ²")
 
-    fig, ax = plt.subplots(figsize=(7.5, 6))
-    im = ax.imshow(corr.values, cmap="RdBu_r", vmin=-1, vmax=1)
-    ax.set_xticks(range(len(cols)), cols, rotation=45, ha="right")
-    ax.set_yticks(range(len(cols)), cols)
-    for i in range(len(cols)):
-        for j in range(len(cols)):
-            ax.text(j, i, f"{corr.values[i, j]:.2f}", ha="center", va="center",
-                    fontsize=8, color="black" if abs(corr.values[i, j]) < 0.6 else "white")
-    fig.colorbar(im, ax=ax, label=f"correlación ({metodo})")
-    ax.set_title(f"Matriz de correlación — {metodo}")
-    st.pyplot(fig, use_container_width=True); plt.close(fig)
-    st.markdown(
-        "Relaciones clave: **O₃ ↔ NO₂ negativa** (el NO₂ se consume al formarse "
-        "el ozono) y **PM10 ↔ NO₂ positiva** (ambos vienen del tráfico). "
-        "Recuerda: correlación no implica causalidad."
-    )
+    with st.container(border=True):
+        st.markdown("**Correlación entre contaminantes** (serie horaria de Merced)")
+        metodo = st.segmented_control(
+            "Coeficiente", ["pearson", "spearman", "kendall"], default="pearson")
+        if metodo is None:
+            metodo = "pearson"
+        cols = [c for c in POLLUTANTS if d["horario"][c].notna().sum() > 100]
+        corr = d["horario"][cols].corr(method=metodo)
+        corr_long = corr.reset_index().melt(id_vars="index", var_name="v2",
+                                            value_name="corr").rename(columns={"index": "v1"})
+        st.altair_chart(make_corr_chart(corr_long, metodo))
+        st.caption("Relaciones clave: O₃ ↔ NO₂ negativa (el NO₂ se consume al formarse "
+                   "el ozono) y PM10 ↔ NO₂ positiva (ambos vienen del tráfico). "
+                   "Correlación no implica causalidad.")
 
-    st.divider()
-    st.subheader("Prueba χ²: ¿la calidad del aire por ozono depende de la temporada?")
     diario = d["diario"]
     o3 = diario[diario["parametro"] == "O3"].copy()
     estaciones = sorted(o3["estacion"].unique())
-    est = st.selectbox("Estación", estaciones,
+    est = st.selectbox("Estación para la prueba χ²", estaciones,
                        index=estaciones.index("MER") if "MER" in estaciones else 0)
-
     tab = tabla_contingencia(o3[o3["estacion"] == est])
     res = chi_desde_tabla(tab)
-    cA, cB = st.columns([3, 2])
-    with cA:
-        st.markdown("**Tabla de contingencia** (días observados):")
-        st.dataframe(tab, use_container_width=True)
-    with cB:
-        if res is not None:
-            chi2, p, dof, _ = res
-            st.metric("Estadístico χ²", f"{chi2:.2f}")
-            st.metric("p-valor", f"{p:.3f}")
-            crit = chi2_dist.ppf(0.95, dof)
-            if p < 0.05:
-                st.success(f"p < 0.05 → se rechaza H₀ (gl={dof}, crítico={crit:.2f}). "
-                           "Hay dependencia con la temporada.")
+
+    col1, col2 = st.columns([3, 2])
+    with col1:
+        with st.container(border=True):
+            st.markdown("**Tabla de contingencia** (días observados)")
+            st.dataframe(tab)
+            prop_long = (tab.reset_index()
+                         .melt(id_vars=tab.index.name or "index",
+                               var_name="temporada", value_name="dias"))
+            prop_long.columns = ["categoria", "temporada", "dias"]
+            prop_long["orden"] = prop_long["categoria"].map(
+                {c: i for i, c in enumerate(CAT_ORDER)})
+            st.markdown("**Proporción de categorías por temporada**")
+            st.altair_chart(make_chi_prop_chart(prop_long))
+    with col2:
+        with st.container(border=True):
+            st.markdown("**Resultado de la prueba**")
+            if res is not None:
+                chi2, p, dof, _ = res
+                st.metric("Estadístico χ²", f"{chi2:.2f}", border=True)
+                st.metric("p-valor", f"{p:.3f}", border=True)
+                crit = chi2_dist.ppf(0.95, dof)
+                if p < 0.05:
+                    st.success(f"p < 0.05 → se rechaza H₀ (gl={dof}, crítico={crit:.2f}). "
+                               "Hay dependencia con la temporada.",
+                               icon=":material/check_circle:")
+                else:
+                    st.warning(f"p ≥ 0.05 → NO se rechaza H₀ (gl={dof}, "
+                               f"crítico={crit:.2f}). No se detecta dependencia.",
+                               icon=":material/info:")
             else:
-                st.warning(f"p ≥ 0.05 → NO se rechaza H₀ (gl={dof}, crítico={crit:.2f}). "
-                           "No se detecta dependencia.")
-        else:
-            st.info("Datos insuficientes para la prueba en esta estación.")
+                st.info("Datos insuficientes para la prueba en esta estación.")
 
     st.markdown(
-        f"El valor exportado por el notebook para **Merced** fue χ² = {d['resumen']['chi2']}, "
-        f"p = {d['resumen']['chi2_p']:.2f} → **no se rechaza H₀**. Esto sorprende, "
-        "porque la estacionalidad del ozono está documentada. La razón: Merced es "
-        "céntrica y su ozono no se concentra tan fuerte por temporada como el del "
-        "surponiente; la prueba categórica pierde potencia ahí."
+        "Arriba ves el χ² **recalculado en vivo** sobre la tabla mostrada. El "
+        f"notebook había exportado χ² ≈ {d['resumen']['chi2']}, p ≈ {d['resumen']['chi2_p']:.2f}; "
+        "los números cambian un poco según el recorte de datos, pero **ambos "
+        "coinciden en lo esencial: p ≥ 0.05, no se rechaza H₀ en Merced**. Esto "
+        "sorprende, porque la estacionalidad del ozono está documentada. La razón: "
+        "Merced es céntrica y su ozono no se concentra tan fuerte por temporada como "
+        "el del surponiente; la prueba categórica pierde potencia ahí."
     )
 
-    with st.expander("Ver la prueba χ² en TODAS las estaciones"):
+    with st.expander("Ver la prueba χ² en TODAS las estaciones",
+                     icon=":material/table_chart:"):
         filas = []
         for e, sub in o3.groupby("estacion"):
             if len(sub) < 120:
@@ -496,59 +626,75 @@ def pagina_correlacion(d):
                           "gl": dof, "p": round(p, 3),
                           "¿rechaza H₀?": "sí" if p < 0.05 else "no"})
         tabla_todas = pd.DataFrame(filas).sort_values("p")
-        st.dataframe(tabla_todas, hide_index=True, use_container_width=True)
-        n_rech = (tabla_todas["¿rechaza H₀?"] == "sí").sum()
-        st.caption(f"Solo **{n_rech}** de {len(tabla_todas)} estaciones rechazan la "
+        st.dataframe(tabla_todas, hide_index=True)
+        n_rech = int((tabla_todas["¿rechaza H₀?"] == "sí").sum())
+        st.caption(f"Solo {n_rech} de {len(tabla_todas)} estaciones rechazan la "
                    "independencia. El patrón estacional existe, pero esta prueba "
                    "categórica solo lo detecta en pocos sitios.")
 
 
 def pagina_conclusiones(d):
-    st.header("Conclusiones")
-    st.markdown(
-        "El proyecto tomó datos reales y con huecos de la RAMA (2024–2026, "
-        "horarios) y, aplicando las técnicas del curso **implementadas a mano y "
-        "verificadas contra librerías**, mostró que:\n\n"
-        "1. **El aire tiene dos relojes.** El análisis espectral confirmó de forma "
-        "objetiva un ciclo diario de 24 h (con armónico de 12 h) y una modulación "
-        "estacional. El ozono es esencialmente periódico y predecible.\n"
-        "2. **El espacio se ordena por química.** El PCA (confirmado por el MDS) "
-        "separa un núcleo de primarios (tráfico/industria) de una periferia de "
-        "ozono, con un eje de SO₂ que marca el corredor industrial del norte.\n"
-        "3. **Las relaciones tienen sentido físico.** O₃ ↔ NO₂ negativa, "
-        "PM10 ↔ NO₂ positiva, O₃ ↔ temperatura positiva.\n"
-        "4. **Un resultado que invita a pensar.** La χ² no detectó dependencia "
-        "estacional en la estación central; solo dos estaciones de la red la "
-        "rechazan. Es una oportunidad de análisis crítico (potencia de la prueba, "
-        "elección de estación y de categorías), no un fracaso."
-    )
-    st.divider()
-    st.subheader("Notas de honestidad para la defensa")
-    st.markdown(
-        "- La interpretación del PCA se ajustó a las cargas reales: PC1 = "
-        "primarios ↔ ozono (no 'nivel general'); PC2 = SO₂; el PM no entró al "
-        "análisis.\n"
-        "- La conclusión de la χ² se reportó tal cual la dan los números "
-        "(p ≈ 0.66 en Merced), explicando por qué no se rechaza H₀."
-    )
+    st.header(":material/flag: Conclusiones")
+    with st.container(border=True):
+        st.markdown(
+            "El proyecto tomó datos reales y con huecos de la RAMA (2024–2026, "
+            "horarios) y, aplicando las técnicas del curso **implementadas a mano y "
+            "verificadas contra librerías**, mostró que:\n\n"
+            "1. **El aire tiene dos relojes.** El análisis espectral confirmó un ciclo "
+            "diario de 24 h (con armónico de 12 h) y una modulación estacional. El "
+            "ozono es esencialmente periódico y predecible.\n"
+            "2. **El espacio se ordena por química.** El PCA (confirmado por el MDS) "
+            "separa un núcleo de primarios (tráfico/industria) de una periferia de "
+            "ozono, con un eje de SO₂ que marca el corredor industrial del norte.\n"
+            "3. **Las relaciones tienen sentido físico.** O₃ ↔ NO₂ negativa, "
+            "PM10 ↔ NO₂ positiva, O₃ ↔ temperatura positiva.\n"
+            "4. **Un resultado que invita a pensar.** La χ² no detectó dependencia "
+            "estacional en la estación central; solo dos estaciones de la red la "
+            "rechazan. Es una oportunidad de análisis crítico (potencia de la prueba, "
+            "elección de estación y de categorías), no un fracaso."
+        )
+    with st.container(border=True):
+        st.markdown("**Notas de honestidad para la defensa**")
+        st.markdown(
+            "- La interpretación del PCA se ajustó a las cargas reales: PC1 = "
+            "primarios ↔ ozono (no 'nivel general'); PC2 = SO₂; el PM no entró al "
+            "análisis.\n"
+            "- La conclusión de la χ² se reportó tal cual la dan los números "
+            "(p ≈ 0.66 en Merced), explicando por qué no se rechaza H₀."
+        )
 
 
 # --------------------------------------------------------------------------
 # App principal
 # --------------------------------------------------------------------------
+PAGINAS = {
+    "Inicio": pagina_inicio,
+    "Los datos": pagina_datos,
+    "Unidad I · Ciclos y filtros": pagina_ciclos,
+    "Unidad II · Análisis espectral": pagina_espectro,
+    "Unidad II · PCA (mapa)": pagina_pca,
+    "Unidad III · Correlación y χ²": pagina_correlacion,
+    "Conclusiones": pagina_conclusiones,
+}
+
+
 def main():
+    st.set_page_config(page_title="Calidad del aire CDMX",
+                       page_icon=":material/air:", layout="wide")
+
     st.sidebar.title("Calidad del aire CDMX")
     st.sidebar.caption("RAMA/SIMAT · 2024–2026")
+    eleccion = st.sidebar.radio("Secciones", list(PAGINAS.keys()))
 
-    propuesta = st.sidebar.text_input("Ruta de datos", DATA_DIR_DEFAULT)
+    with st.sidebar.expander("Opciones de datos", icon=":material/tune:"):
+        propuesta = st.text_input("Ruta de datos", DATA_DIR_DEFAULT)
+
     data_dir = resolver_data_dir(propuesta)
     if data_dir is None:
         st.error(
-            "No encontré los archivos de datos. Asegúrate de que existan "
-            f"`{propuesta}/resumen.json` y los demás CSV, o corrige la 'Ruta de "
-            "datos' en la barra lateral.\n\nEstructura esperada: una carpeta "
-            "`datos/procesados/` junto a `app.py`."
-        )
+            "No encontré los archivos de datos. Asegúrate de que exista "
+            f"`{propuesta}/resumen.json` y los demás CSV junto a `app.py`.",
+            icon=":material/error:")
         st.stop()
 
     try:
@@ -560,22 +706,11 @@ def main():
             "resumen": load_resumen(str(data_dir)),
         }
     except Exception as e:  # noqa: BLE001
-        st.error(f"Error al leer los datos: {e}")
+        st.error(f"Error al leer los datos: {e}", icon=":material/error:")
         st.stop()
 
-    paginas = {
-        "Inicio": pagina_inicio,
-        "Los datos": pagina_datos,
-        "Unidad I · Ciclos y filtros": pagina_ciclos,
-        "Unidad II · Análisis espectral": pagina_espectro,
-        "Unidad II · PCA (mapa)": pagina_pca,
-        "Unidad III · Correlación y χ²": pagina_correlacion,
-        "Conclusiones": pagina_conclusiones,
-    }
-    eleccion = st.sidebar.radio("Secciones", list(paginas.keys()))
-    st.sidebar.divider()
-    st.sidebar.caption(f"Datos cargados desde:\n`{data_dir}`")
-    paginas[eleccion](d)
+    st.sidebar.caption(f"Datos cargados desde: `{data_dir}`")
+    PAGINAS[eleccion](d)
 
 
 if __name__ == "__main__":
