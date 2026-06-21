@@ -1,0 +1,39 @@
+name: aire-cdmx
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python
+  - python=3.11
+
+  # Núcleo científico
+  - numpy=1.26.4
+  - pandas=2.2.2
+  - scipy=1.13.1
+  - scikit-learn=1.4.2
+
+  # Visualización
+  - matplotlib=3.8.4
+  - seaborn=0.13.2
+
+  # Lectura/escritura de Excel legacy (.xls de la RAMA)
+  - xlrd=2.0.1          # requerido para leer los .xls reales (pd.read_excel engine="xlrd")
+  - xlwt=1.3.0          # usado por la rama de datos sintéticos de respaldo
+
+  # Jupyter
+  - jupyter=1.0.0
+  - ipykernel=6.29.4
+  - nbformat=5.10.4
+  - nbclient=0.10.0
+  - notebook=7.2.0
+
+  # Dashboard (siguiente entrega)
+  - streamlit=1.35.0
+
+  # Utilidades
+  - pip
+
+  - pip:
+    # nada extra por pip: todo viene de conda-forge

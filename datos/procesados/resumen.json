@@ -1,0 +1,15 @@
+{
+  "estacion_principal": "MER",
+  "nombre_estacion": "Merced",
+  "zona": "CE",
+  "varianza_pc1": 0.729,
+  "varianza_pc2": 0.1415,
+  "q_90": 3,
+  "chi2": 4.12,
+  "chi2_p": 0.6600343553235255,
+  "anios": [
+    2024,
+    2025,
+    2026
+  ]
+}
