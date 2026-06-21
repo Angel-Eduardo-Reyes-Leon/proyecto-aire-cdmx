@@ -324,6 +324,42 @@ def resolver_data_dir(propuesta: str):
 
 
 # --------------------------------------------------------------------------
+# Cálculos cacheados (se computan una vez por entrada y luego son instantáneos)
+# --------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def corr_matrix(data_dir: str, metodo: str) -> pd.DataFrame:
+    h = load_horario(data_dir)
+    cols = [c for c in POLLUTANTS if h[c].notna().sum() > 100]
+    return h[cols].corr(method=metodo)
+
+
+@st.cache_data(show_spinner=False)
+def chi_todas_estaciones(data_dir: str) -> pd.DataFrame:
+    diario = load_diario(data_dir)
+    o3 = diario[diario["parametro"] == "O3"]
+    filas = []
+    for e, sub in o3.groupby("estacion"):
+        if len(sub) < 120:
+            continue
+        r2 = chi_desde_tabla(tabla_contingencia(sub))
+        if r2 is None:
+            continue
+        chi2, p, dof, _ = r2
+        filas.append({"estación": e, "n_días": len(sub), "χ²": round(chi2, 2),
+                      "gl": dof, "p": round(p, 3),
+                      "¿rechaza H₀?": "sí" if p < 0.05 else "no"})
+    return pd.DataFrame(filas).sort_values("p")
+
+
+def _downsample(df: pd.DataFrame, max_points: int = 3000) -> pd.DataFrame:
+    """Reduce los puntos para que la gráfica sea ligera (visualmente idéntica)."""
+    if len(df) > max_points:
+        step = int(np.ceil(len(df) / max_points))
+        return df.iloc[::step]
+    return df
+
+
+# --------------------------------------------------------------------------
 # Páginas
 # --------------------------------------------------------------------------
 def pagina_inicio(d):
@@ -400,8 +436,8 @@ def pagina_datos(d):
         st.dataframe(d["horario"].head(24), hide_index=True)
 
 
-def pagina_ciclos(d):
-    st.header(":material/schedule: Unidad I · Los ciclos del aire")
+@st.fragment
+def _ciclos_fragment(d):
     cont = st.selectbox("Contaminante", POLLUTANTS, index=POLLUTANTS.index("O3"))
     u = UNITS[cont]
     h = d["horario"].copy()
@@ -454,17 +490,17 @@ def pagina_ciclos(d):
                 "Mediana móvil": s.rolling(24, center=True, min_periods=6).median(),
                 "Exponencial": pd.Series(filtro_exponencial(s.values, 0.05), index=s.index),
             })
-            st.line_chart(df_f, y_label=f"{cont} ({u})",
+            st.line_chart(_downsample(df_f), y_label=f"{cont} ({u})",
                           color=[C_CRUDA, C_MEDIA, C_MEDIANA, C_EXPO])
 
 
-def pagina_espectro(d):
-    st.header(":material/graphic_eq: Unidad II · Análisis espectral")
-    st.markdown(
-        "La transformada de Fourier descompone la serie en las **ondas** que la "
-        "forman y mide cuál es más fuerte. Confirma de forma objetiva los ciclos "
-        "vistos en la exploración."
-    )
+def pagina_ciclos(d):
+    st.header(":material/schedule: Unidad I · Los ciclos del aire")
+    _ciclos_fragment(d)
+
+
+@st.fragment
+def _espectro_fragment(d):
     h = d["horario"]
     anios = sorted(h["fecha"].dt.year.unique())
     c1, c2 = st.columns(2)
@@ -506,6 +542,16 @@ def pagina_espectro(d):
                    "el cursor sobre los puntos para ver el periodo exacto.")
 
 
+def pagina_espectro(d):
+    st.header(":material/graphic_eq: Unidad II · Análisis espectral")
+    st.markdown(
+        "La transformada de Fourier descompone la serie en las **ondas** que la "
+        "forman y mide cuál es más fuerte. Confirma de forma objetiva los ciclos "
+        "vistos en la exploración."
+    )
+    _espectro_fragment(d)
+
+
 def pagina_pca(d):
     st.header(":material/scatter_plot: Unidad II · PCA: el mapa de las estaciones")
     r = d["resumen"]
@@ -544,17 +590,15 @@ def pagina_pca(d):
                        "describía PC1 como 'nivel general' e incluía al PM.")
 
 
-def pagina_correlacion(d):
-    st.header(":material/analytics: Unidad III · Correlación y prueba χ²")
-
+@st.fragment
+def _corr_fragment(d):
     with st.container(border=True):
         st.markdown("**Correlación entre contaminantes** (serie horaria de Merced)")
         metodo = st.segmented_control(
             "Coeficiente", ["pearson", "spearman", "kendall"], default="pearson")
         if metodo is None:
             metodo = "pearson"
-        cols = [c for c in POLLUTANTS if d["horario"][c].notna().sum() > 100]
-        corr = d["horario"][cols].corr(method=metodo)
+        corr = corr_matrix(d["dir"], metodo)
         corr_long = corr.reset_index().melt(id_vars="index", var_name="v2",
                                             value_name="corr").rename(columns={"index": "v1"})
         st.altair_chart(make_corr_chart(corr_long, metodo))
@@ -562,8 +606,10 @@ def pagina_correlacion(d):
                    "el ozono) y PM10 ↔ NO₂ positiva (ambos vienen del tráfico). "
                    "Correlación no implica causalidad.")
 
-    diario = d["diario"]
-    o3 = diario[diario["parametro"] == "O3"].copy()
+
+@st.fragment
+def _chi_fragment(d):
+    o3 = d["diario"][d["diario"]["parametro"] == "O3"]
     estaciones = sorted(o3["estacion"].unique())
     est = st.selectbox("Estación para la prueba χ²", estaciones,
                        index=estaciones.index("MER") if "MER" in estaciones else 0)
@@ -602,6 +648,12 @@ def pagina_correlacion(d):
             else:
                 st.info("Datos insuficientes para la prueba en esta estación.")
 
+
+def pagina_correlacion(d):
+    st.header(":material/analytics: Unidad III · Correlación y prueba χ²")
+    _corr_fragment(d)
+    _chi_fragment(d)
+
     st.markdown(
         "Arriba ves el χ² **recalculado en vivo** sobre la tabla mostrada. El "
         f"notebook había exportado χ² ≈ {d['resumen']['chi2']}, p ≈ {d['resumen']['chi2_p']:.2f}; "
@@ -614,18 +666,7 @@ def pagina_correlacion(d):
 
     with st.expander("Ver la prueba χ² en TODAS las estaciones",
                      icon=":material/table_chart:"):
-        filas = []
-        for e, sub in o3.groupby("estacion"):
-            if len(sub) < 120:
-                continue
-            r2 = chi_desde_tabla(tabla_contingencia(sub))
-            if r2 is None:
-                continue
-            chi2, p, dof, _ = r2
-            filas.append({"estación": e, "n_días": len(sub), "χ²": round(chi2, 2),
-                          "gl": dof, "p": round(p, 3),
-                          "¿rechaza H₀?": "sí" if p < 0.05 else "no"})
-        tabla_todas = pd.DataFrame(filas).sort_values("p")
+        tabla_todas = chi_todas_estaciones(d["dir"])
         st.dataframe(tabla_todas, hide_index=True)
         n_rech = int((tabla_todas["¿rechaza H₀?"] == "sí").sum())
         st.caption(f"Solo {n_rech} de {len(tabla_todas)} estaciones rechazan la "
@@ -699,6 +740,7 @@ def main():
 
     try:
         d = {
+            "dir": str(data_dir),
             "horario": load_horario(str(data_dir)),
             "diario": load_diario(str(data_dir)),
             "pca": load_pca(str(data_dir)),
