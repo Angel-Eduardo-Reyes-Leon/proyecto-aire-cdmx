@@ -662,7 +662,6 @@ def sec_lab(d):
 
 # --- app ------------------------------------------------------------------
 SECCIONES = [
-    ("Panorama", sec_panorama),
     ("El reloj doble", sec_reloj),
     ("El mapa que respira", sec_mapa),
     ("El mapa químico", sec_quimico),
