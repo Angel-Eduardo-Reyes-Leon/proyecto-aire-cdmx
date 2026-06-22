@@ -1,6 +1,6 @@
 # Análisis de calidad del aire de la CDMX (RAMA/SIMAT, 2024–2026)
 
-*Por Angel Eduardo Reyes León y Alan García Juanillo · Grupo 5AM1*
+*Por García Juanillo Alan y Reyes León Angel Eduardo · Grupo 5AM1*
 
 Proyecto final de **Analítica y Visualización de Datos**. Se analizan los datos
 horarios de calidad del aire del Valle de México aplicando las técnicas del
@@ -9,7 +9,7 @@ presenta todo en un **dashboard interactivo** hecho con Streamlit.
 
 ## 🔗 Dashboard interactivo
 
-(pega aquí el enlace de Streamlit cuando lo despliegues)
+https://proyecto-aire-cdmx.streamlit.app/
 
 ## Contenido del repositorio
 
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Se abre solo en el navegador (o entra a http://localhost:8501).
+
 
 ## Datos
 
@@ -37,7 +37,7 @@ horaria. Contaminantes: O₃, NO, NO₂, NOX, CO, SO₂, PM10, PM2.5 y PMCO.
 
 ## Autores
 
-- **Angel Eduardo Reyes León**
 - **Alan García Juanillo**
+- **Angel Eduardo Reyes León**
 
 Grupo: **5AM1** · Materia: Analítica y Visualización de Datos
