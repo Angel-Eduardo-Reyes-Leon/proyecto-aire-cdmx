@@ -1,10 +1,36 @@
+# ---------------------------------------------------------------------------
 # Colócalo en tu repositorio como  .streamlit/config.toml
-# Fija el tema editorial (papel cálido + acento) para que toda la app —incluidos
-# los controles— combine, sin importar si el navegador está en modo claro u oscuro.
+#
+# El tema NO es decorativo: sale del propio aire.
+#  · Los ESTADOS de calidad usan la escala oficial del índice de calidad del
+#    aire (verde "Buena" -> rojo "Muy mala"): el lenguaje visual que cualquiera
+#    reconoce de una app del clima.
+#  · Los NEUTROS evocan el cielo del altiplano: gris-azul claro de fondo, tinta
+#    azul pizarra, y un acento azul-ozono para resaltar.
+#  · La tipografía (Space Grotesk + Inter) da un aire de instrumento de medición.
+# ---------------------------------------------------------------------------
 [theme]
 base = "light"
-backgroundColor = "#FAF8F3"
-secondaryBackgroundColor = "#F3EFE6"
-textColor = "#1C1B19"
-primaryColor = "#1D6A75"
-font = "sans serif"
+backgroundColor = "#F3F6F7"            # cielo despejado del altiplano
+secondaryBackgroundColor = "#FFFFFF"   # superficie de tarjetas y controles
+textColor = "#16242B"                  # azul pizarra profundo
+primaryColor = "#1F7A8C"               # azul-ozono (acento e interacción)
+linkUnderline = false
+baseFontSize = 15
+
+# Tipografía vía Google Fonts (Streamlit la carga; no hace falta CSS)
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap"
+
+# Paleta semántica = índice de calidad del aire (la usan badges y alertas)
+greenColor  = "#3F9E5A"   # Buena
+yellowColor = "#E1B530"   # Aceptable
+orangeColor = "#E07B2E"   # Mala
+redColor    = "#C8392E"   # Muy mala
+violetColor = "#7E5AA0"   # Extremadamente mala
+blueColor   = "#1F7A8C"   # ozono / cielo
+grayColor   = "#5B6B74"
+
+# Colores por defecto de las gráficas (Altair/Vega-Lite), alineados a la paleta
+chartCategoricalColors = ["#1F7A8C", "#E07B2E", "#3F9E5A", "#7E5AA0", "#E1B530", "#C8392E", "#5B6B74"]
+chartSequentialColors  = ["#F2F7F8", "#D8E9EC", "#B7D9DF", "#94C7CF", "#6FB3BE", "#4D9BA8", "#327F8C", "#216470", "#154A54", "#0C3138"]
