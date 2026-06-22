@@ -9,7 +9,7 @@ presenta todo en un **dashboard interactivo** hecho con Streamlit.
 
 ## 🔗 Dashboard interactivo
 
-(https://proyecto-aire-cdmx.streamlit.app/)
+https://proyecto-aire-cdmx.streamlit.app/
 
 ## Contenido del repositorio
 
