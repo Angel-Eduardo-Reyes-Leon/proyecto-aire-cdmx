@@ -1,0 +1,29 @@
+# Coordenadas de las estaciones SIMAT/RAMA (grados decimales).
+# VERIFICA estos valores contra el catalogo oficial (aire.cdmx.gob.mx) antes de entregar.
+# Faltan 8 estaciones sin zona (AJU, BJU, FAR, GAM, INN, LLA, LPR, MPA): completalas aqui si las necesitas en el mapa.
+estacion,lat,lon
+ACO,19.6355,-98.9120
+AJM,19.2723,-99.2077
+ATI,19.5770,-99.2541
+CAM,19.4682,-99.1698
+CCA,19.3262,-99.1761
+CHO,19.2670,-98.8861
+CUA,19.3654,-99.2932
+CUT,19.7222,-99.1984
+FAC,19.4825,-99.2438
+HGM,19.4128,-99.1524
+IZT,19.3842,-99.1176
+MER,19.4246,-99.1194
+MGH,19.4041,-99.2025
+MON,19.4605,-98.9028
+NEZ,19.3936,-99.0282
+PED,19.3253,-99.2040
+SAC,19.3456,-99.0090
+SAG,19.5322,-99.0305
+TAH,19.2464,-99.0102
+TLA,19.5296,-99.2045
+TLI,19.6029,-99.1772
+UAX,19.3045,-99.1032
+UIZ,19.3594,-99.0739
+VIF,19.6584,-99.0966
+XAL,19.5254,-99.0825
