@@ -212,6 +212,46 @@ def lab_estacion(d, est, X, Y, valor_col):
     return piv
 
 
+@st.cache_data(show_spinner=False)
+def fechas_validas(d, estacion, cont):
+    di = load_diario(d)
+    s = di[(di["parametro"] == cont) & (di["estacion"] == estacion)].dropna(subset=["maximo"])
+    return sorted(s["dia"].dt.date.unique())
+
+
+@st.cache_data(show_spinner=False)
+def dia_merced_horas(d, fecha, cont):
+    h = load_horario(d).copy()
+    m = h[h["fecha"].dt.date == fecha][["fecha", cont]].dropna()
+    m["hora"] = m["fecha"].dt.hour
+    return m[["hora", cont]].rename(columns={cont: "valor"})
+
+
+@st.cache_data(show_spinner=False)
+def dia_estacion_valores(d, estacion, fecha):
+    di = load_diario(d)
+    s = di[(di["estacion"] == estacion) & (di["dia"].dt.date == fecha)]
+    s = s.dropna(subset=["maximo"]).copy()
+    s["unidad"] = s["parametro"].map(UNITS)
+    orden = {p: i for i, p in enumerate(POLLUTANTS)}
+    s = s.sort_values("parametro", key=lambda col: col.map(orden))
+    return s[["parametro", "maximo", "promedio", "unidad"]]
+
+
+@st.cache_data(show_spinner=False)
+def fechas_validas_mapa(d, cont):
+    di = load_diario(d)
+    s = di[(di["parametro"] == cont)].dropna(subset=["maximo"])
+    return sorted(s["dia"].dt.date.unique())
+
+
+@st.cache_data(show_spinner=False)
+def mapa_dia(d, cont, valor_col, fecha):
+    di = load_diario(d)
+    s = di[(di["parametro"] == cont) & (di["dia"].dt.date == fecha)]
+    return s[["estacion", valor_col]].rename(columns={valor_col: "valor"}).dropna()
+
+
 # --- graficas (el tema lo aplica Streamlit; aqui solo color de datos) ------
 def show(ch):
     st.altair_chart(ch, width="stretch")
@@ -219,6 +259,22 @@ def show(ch):
 
 def show_fixed(ch):
     st.altair_chart(ch)
+
+
+def chart_dia_merced(m, cont):
+    line = alt.Chart(m).mark_line(
+        point=alt.OverlayMarkDef(size=30, color=ACCENT), color=ACCENT, strokeWidth=2).encode(
+        x=alt.X("hora:Q", title="hora del día", scale=alt.Scale(domain=[-0.5, 23.5]),
+                axis=alt.Axis(values=list(range(0, 24, 2)))),
+        y=alt.Y("valor:Q", title=f"{cont} ({UNITS[cont]})", scale=alt.Scale(zero=True)),
+        tooltip=[alt.Tooltip("hora:Q", title="hora"),
+                 alt.Tooltip("valor:Q", title=cont, format=".1f")])
+    capas = [line]
+    if cont == "O3":
+        norma = alt.Chart(pd.DataFrame({"y": [90]})).mark_rule(
+            color=WARM, strokeDash=[4, 4], opacity=0.6).encode(y="y:Q")
+        capas.insert(0, norma)
+    return alt.layer(*capas).properties(height=270)
 
 
 def chart_timeline(df, cont):
@@ -262,7 +318,8 @@ def chart_mapa_geo(basemap, dff, cont, sel=None):
     layers = []
     if basemap is not None:
         layers.append(alt.Chart(alt.Data(values=basemap["features"])).mark_geoshape(
-            fill="#E9EFF1", stroke="#FFFFFF", strokeWidth=1.1))
+            fill="#EDF2F3", stroke="#AEBFC6", strokeWidth=0.55).encode(
+            tooltip=[alt.Tooltip("properties.mun:N", title="municipio")]))
     # viento dominante diurno (referencia, no calculado): del NE hacia el SW
     wind_line = pd.DataFrame({"lat": [19.72, 19.31], "lon": [-98.93, -99.19], "o": [0, 1]})
     layers.append(alt.Chart(wind_line).mark_line(
@@ -408,14 +465,41 @@ def sec_panorama(d):
     serie = serie_diaria(dd, est, cont)
     if len(serie):
         show(chart_timeline(serie, cont))
+        if cont == "O3":
+            st.markdown("Cada franja es un día del año, un renglón por año. "
+                        "Verde es bueno y rojo es malo.")
+        else:
+            st.markdown(f"Cada franja es un día, sombreada por el {cont} máximo de ese día.")
     else:
         st.info(f"No hay datos diarios de {cont} en esta estación.")
-    if cont == "O3":
-        st.markdown("Cada franja es un día. La mayoría son verdes: el ozono no suele superar "
-                    "la norma. Cambia de contaminante o de estación para ver otra cara.")
+
+    st.markdown("**Mira un día en detalle**")
+    fechas = fechas_validas(dd, est, cont)
+    if not fechas:
+        st.info("No hay días con dato para esta combinación.")
+        return
+    fecha = st.selectbox("Día", fechas, index=len(fechas) - 1,
+                         format_func=lambda f: f.strftime("%d/%m/%Y"),
+                         key="dia_panorama")
+    if est == d["resumen"]["estacion_principal"]:
+        horas = dia_merced_horas(dd, fecha, cont)
+        if len(horas) >= 2:
+            show(chart_dia_merced(horas, cont))
+            pico = horas.loc[horas["valor"].idxmax()]
+            st.markdown(f"En Merced, el {cont} de ese día llegó a su máximo a las "
+                        f"{int(pico['hora']):02d} h. Solo Merced tiene datos hora por hora.")
+        else:
+            st.info("Ese día no tiene suficientes horas con dato.")
     else:
-        st.markdown(f"Cada franja es un día, sombreada por el {cont} máximo. "
-                    "Compara estaciones y notarás que el color cambia mucho.")
+        vals = dia_estacion_valores(dd, est, fecha)
+        if len(vals):
+            vals = vals.rename(columns={"parametro": "Contaminante", "maximo": "Máximo",
+                                        "promedio": "Promedio", "unidad": "Unidad"})
+            st.dataframe(vals, hide_index=True, width="stretch")
+            st.markdown("Esta estación solo tiene un valor por día (no hay datos por hora); "
+                        "por eso se muestran los números del día.")
+        else:
+            st.info("Ese día no tiene dato en esta estación.")
 
 
 @st.fragment
@@ -449,8 +533,8 @@ def sec_mapa(d):
     dd = d["dir"]
     st.caption("Dónde pasa")
     st.subheader("El mapa que respira")
-    st.markdown("Cada punto es una estación en su lugar real. Mueve el mes para ver dónde "
-                "está alta la contaminación y cómo cambia a lo largo del año.")
+    st.markdown("Cada punto es una estación en su lugar real. Elige el periodo para ver dónde "
+                "está alta la contaminación y cómo se mueve.")
     basemap = load_basemap(dd)
     coords = load_coords(dd)
     c1, c2 = st.columns([2, 1.5])
@@ -458,10 +542,22 @@ def sec_mapa(d):
                         key="cont_global")
     valor = c2.segmented_control("Valor", ["máximo", "promedio"], default="máximo") or "máximo"
     valor_col = "maximo" if valor == "máximo" else "promedio"
-    mes = st.select_slider("Mes", options=list(range(1, 13)), value=5,
-                           format_func=lambda m: MESES[m - 1])
-    agg = mapa_data(dd, cont, valor_col)
-    dff = agg[agg["mes"] == mes].copy()
+    modo = st.segmented_control("Ver por", ["mes", "día"], default="mes") or "mes"
+    if modo == "mes":
+        mes = st.select_slider("Mes", options=list(range(1, 13)), value=5,
+                               format_func=lambda m: MESES[m - 1])
+        agg = mapa_data(dd, cont, valor_col)
+        dff = agg[agg["mes"] == mes].copy()
+        periodo = f"promedio de {MESES[mes - 1]}"
+    else:
+        fechas = fechas_validas_mapa(dd, cont)
+        if not fechas:
+            st.info(f"No hay días con dato de {cont}.")
+            return
+        fecha = st.selectbox("Día", fechas, index=len(fechas) - 1,
+                             format_func=lambda f: f.strftime("%d/%m/%Y"), key="dia_mapa")
+        dff = mapa_dia(dd, cont, valor_col, fecha)
+        periodo = f"{valor} del {fecha.strftime('%d/%m/%Y')}"
     zmap = dict(zip(d["pca"]["estacion"], d["pca"]["zona"]))
     dff["zona"] = dff["estacion"].map(zmap).fillna("ND")
     dff["zona_nombre"] = dff["zona"].map(ZONE_NAMES).fillna("sin zona")
@@ -470,14 +566,18 @@ def sec_mapa(d):
         g = dff.merge(coords, on="estacion", how="inner")
         if len(g):
             show_fixed(chart_mapa_geo(basemap, g, cont, sel))
-            st.markdown(f"El color marca el {cont} del mes: verde es bajo y rojo es alto "
-                        "(la escala está a la derecha). La flecha señala el viento dominante "
-                        "diurno, puesta como referencia.")
+            st.markdown(f"El color marca el {cont} ({periodo}): verde bajo, rojo alto, con la "
+                        f"escala a la derecha. Se ven las {len(g)} estaciones con dato y "
+                        "ubicación. La flecha es el viento dominante diurno, de referencia.")
+            if modo == "día":
+                st.markdown("Por día no todas las estaciones reportan; las que faltan ese día "
+                            "no aparecen. No hay datos por hora para el conjunto de estaciones; "
+                            "la hora solo existe en Merced, en la pestaña del reloj.")
         else:
-            st.info("No hay estaciones con ubicación para este mes.")
+            st.info("No hay estaciones con dato y ubicación para este periodo.")
     else:
         show(chart_mapa_rank(dff))
-        st.markdown("Estaciones ordenadas por concentración del mes.")
+        st.markdown(f"Estaciones ordenadas por concentración ({periodo}).")
 
 
 def sec_quimico(d):
