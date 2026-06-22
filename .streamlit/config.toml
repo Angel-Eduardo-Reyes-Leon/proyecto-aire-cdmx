@@ -1,58 +1,10 @@
+# Colócalo en tu repositorio como  .streamlit/config.toml
+# Fija el tema editorial (papel cálido + acento) para que toda la app —incluidos
+# los controles— combine, sin importar si el navegador está en modo claro u oscuro.
 [theme]
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
-codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
-baseFontSize = 15
-baseRadius = "10px"
-buttonRadius = "10px"
-showWidgetBorder = true
-showSidebarBorder = true
-linkUnderline = false
-headingFontSizes = ["30px", "23px", "19px", "16px", "14px", "13px"]
-headingFontWeights = [700, 600, 600, 600, 500, 500]
-chartCategoricalColors = ["#3B82F6", "#22C55E", "#EF4444", "#8B5CF6", "#F97316", "#06B6D4", "#EAB308", "#64748B"]
-chartSequentialColors = ["#E0F2FE", "#BAE6FD", "#7DD3FC", "#38BDF8", "#0EA5E9", "#0284C7", "#0369A1", "#075985", "#0C4A6E", "#082F49"]
-
-[theme.light]
-primaryColor = "#2563EB"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F1F5F9"
-textColor = "#0F172A"
-linkColor = "#2563EB"
-borderColor = "#E2E8F0"
-codeBackgroundColor = "#F1F5F9"
-greenColor = "#16A34A"
-redColor = "#DC2626"
-orangeColor = "#EA580C"
-yellowColor = "#CA8A04"
-blueColor = "#2563EB"
-violetColor = "#7C3AED"
-grayColor = "#64748B"
-dataframeHeaderBackgroundColor = "#F1F5F9"
-
-[theme.light.sidebar]
-backgroundColor = "#F8FAFC"
-secondaryBackgroundColor = "#F1F5F9"
-borderColor = "#E2E8F0"
-
-[theme.dark]
-primaryColor = "#60A5FA"
-backgroundColor = "#0F172A"
-secondaryBackgroundColor = "#1E293B"
-textColor = "#F1F5F9"
-linkColor = "#60A5FA"
-borderColor = "#334155"
-codeBackgroundColor = "#1E293B"
-greenColor = "#34D399"
-redColor = "#F87171"
-orangeColor = "#FB923C"
-yellowColor = "#FBBF24"
-blueColor = "#60A5FA"
-violetColor = "#A78BFA"
-grayColor = "#94A3B8"
-dataframeHeaderBackgroundColor = "#1E293B"
-
-[theme.dark.sidebar]
-backgroundColor = "#0B1220"
-secondaryBackgroundColor = "#1E293B"
-borderColor = "#334155"
+base = "light"
+backgroundColor = "#FAF8F3"
+secondaryBackgroundColor = "#F3EFE6"
+textColor = "#1C1B19"
+primaryColor = "#1D6A75"
+font = "sans serif"
